@@ -1,0 +1,124 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 20px;
+    background-color: #f4f7f6;
+    color: #333;
+}
+
+.container {
+    max-width: 900px;
+    margin: 20px auto;
+    background-color: #fff;
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+h1, h2 {
+    color: #0056b3;
+    text-align: center;
+    margin-bottom: 25px;
+}
+
+.message-area {
+    margin-bottom: 30px;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    background-color: #fafafa;
+    max-height: 400px;
+    overflow-y: auto;
+    padding: 15px;
+    display: flex;
+    flex-direction: column-reverse; /* Display new messages at the bottom of the scroll area */
+}
+
+#message_list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column; /* Ensure items stack correctly */
+}
+
+#message_list li {
+    padding: 10px 15px;
+    margin-bottom: 10px;
+    border-radius: 5px;
+    font-size: 0.95em;
+    line-height: 1.5;
+    word-wrap: break-word;
+    max-width: 80%; /* Limit message bubble width */
+}
+
+#message_list li.incoming {
+    background-color: #e6f7ff;
+    border-left: 5px solid #1890ff;
+    align-self: flex-start; /* Align incoming to the left */
+}
+
+#message_list li.outgoing {
+    background-color: #eafff7;
+    border-right: 5px solid #52c41a;
+    align-self: flex-end; /* Align outgoing to the right */
+    text-align: right;
+}
+
+.message-header {
+    font-size: 0.85em;
+    color: #666;
+    margin-bottom: 5px;
+}
+
+.message-header strong {
+    color: #0056b3;
+}
+
+.message-header .timestamp {
+    float: right;
+    color: #999;
+}
+
+.reply-area {
+    padding-top: 20px;
+    border-top: 1px solid #e0e0e0;
+}
+
+#reply_form label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: bold;
+    color: #555;
+}
+
+#reply_form input[type="text"],
+#reply_form textarea {
+    width: calc(100% - 20px);
+    padding: 10px;
+    margin-bottom: 15px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 1em;
+    box-sizing: border-box;
+}
+
+#reply_form textarea {
+    resize: vertical;
+}
+
+#reply_form button {
+    background-color: #007bff;
+    color: white;
+    padding: 12px 25px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 1.1em;
+    transition: background-color 0.3s ease;
+    display: block;
+    width: 100%;
+}
+
+#reply_form button:hover {
+    background-color: #0056b3;
+}
