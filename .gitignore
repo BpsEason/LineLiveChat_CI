@@ -1,0 +1,10 @@
+/vendor/
+/system/
+/application/cache/
+/application/logs/
+*.log
+.env
+/nbproject/
+.idea/
+.vscode/
+Thumbs.db
