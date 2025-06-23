@@ -247,4 +247,202 @@ LineLiveChat_CI/
   redis-cli MONITOR
   redis-cli INFO CLIENTS
   ```
-- **
+- **日誌**：集中日誌到 Splunk 或 Windows 事件檢視器，檢查 Webhook 錯誤與 Worker 狀態。
+- **快取**：用共用 Redis 快取 Line API 回應：
+  ```php
+  $this->redis->setex('line_user_profile_' . $user_id, 3600, json_encode($profile));
+  ```
+
+### 5. 硬體建議
+- **Web Server (Apache + FastCGI)**：2 vCPU，4GB RAM，支援 100~200 人同時在線。
+- **Redis Server**：2 vCPU，4~8GB RAM，確保記憶體足夠處理跨伺服器佇列與快取。
+- **Worker Server**：1 vCPU，2GB RAM，足以運行 CLI 腳本。
+
+## 使用方式
+- **Line Webhook**：接收用戶訊息，存到共用 Redis 的 `line_incoming_messages` 佇列。
+- **客服介面**：透過長輪詢從共用 Redis 取出訊息並顯示，客服回覆存入 `customer_outgoing_messages` 佇列。
+- **後台 Worker**：從共用 Redis 取出回覆，透過 Line Push API 發送。
+
+## 關鍵程式碼（含詳細註解）
+### 1. Line Webhook 簽名驗證 (`application/controllers/Line_webhook.php`)
+```php
+/**
+ * 處理 Line Webhook 的主要方法，負責驗證請求簽名並處理事件
+ */
+public function index(): void {
+    // 取得 HTTP 頭中提取的 X-Line-Signature 用於驗證
+    $signature = $this->input->get_request_header('X-Line-Signature');
+    // 取得原始請求體用於簽名計算
+    $http_body = file_get_contents('php://input');
+    // 從配置文件中取得 Line Channel Secret
+    $channel_secret = $this->config->item('line_channel_secret');
+
+    // 驗證簽名，若失敗則記錄錯誤並拒絕請求
+    if (!$this->line_api->validate_signature($http_body, $signature, $channel_secret)) {
+        log_message('error', 'Line Webhook: Signature validation failed. Signature: ' . $signature);
+        http_response_code(400);
+        echo 'Signature validation failed';
+        exit();
+    }
+    // 解碼 JSON 請求體，確保事件格式正確
+    $decoded_body = json_decode($http_body, true);
+    if (!isset($decoded_body['events']) || !is_array($decoded_body['events'])) {
+        log_message('warning', 'Line Webhook: Invalid event format received.');
+        http_response_code(400);
+        echo 'Invalid event format';
+        exit();
+    }
+
+    // 處理每個事件（訊息、追蹤、取消追蹤等）
+    $events = $decoded_body['events'];
+    foreach ($events as &$event) {
+        switch ($event['type']) {
+            case 'message':
+                $this->handleMessageEvent($event); // 處理訊息事件
+                break;
+            case 'follow':
+                $this->handleFollowEvent($event); // 處理追蹤事件
+                break;
+            case 'unfollow':
+                $this->handleUnfollowEvent($event); // 處理取消追蹤事件
+                break;
+            default:
+                log_message('info', 'Line Webhook: Unhandled event type: ' . $event['type']);
+                break;
+        }
+    }
+    echo "OK"; // 回應 Line API 表示處理成功
+}
+```
+**說明**：此程式碼驗證 Line Webhook 請求簽名，確保請求安全。訊息處理後存入共用 Redis，支援跨伺服器高效存取。
+
+### 2. Redis 訊息佇列處理 (`application/models/Message_model.php`)
+```php
+/**
+ * 將來自 Line 的訊息加入共用 Redis 佇列，並發送即時通知
+ * @param string $user_id 用戶 ID
+ * @param string $message_type 訊息類型（text, sticker, etc.）
+ * @param string $message_content 訊息內容
+ */
+public function add_line_message_to_redis($user_id, $message_type, $message_content): void {
+    // 構建訊息資料結構
+    $message_data = [
+        'direction' => 'in', // 標記為接收訊息
+        'user_id' => $user_id,
+        'type' => $message_type,
+        'content' => $message_content,
+        'timestamp' => time()
+    ];
+    // 使用 RPUSH 將訊息加入共用 Redis 佇列尾部
+    $this->redis->rpush(self::LINE_IN_QUEUE, json_encode($message_data));
+    // 發佈通知，觸發其他伺服器的客服介面更新
+    $this->redis->publish(self::NEW_MESSAGE_CHANNEL, 'new_line_message');
+    // 記錄日誌，方便除錯
+    log_message('info', 'Line message added to Redis queue for user: ' . $user_id);
+}
+
+/**
+ * 從共用 Redis 佇列中提取新訊息，用於長輪詢
+ * @param int $timeout 阻塞等待時間（秒）
+ * @return array|null 訊息資料或 null（若超時）
+ */
+public function get_new_incoming_message_from_redis($timeout = 25): ?array {
+    // 使用 BLPOP 阻塞式提取共用 Redis 佇列頭部訊息
+    $result = $this->redis->blpop([self::LINE_IN_QUEUE], $timeout);
+    if ($result && isset($result[1])) {
+        // 記錄成功提取的日誌
+        log_message('info', 'New incoming message retrieved from Redis.');
+        // 解碼 JSON 訊息並返回
+        return json_decode($result[1], true);
+    }
+    // 若超時無訊息，返回 null
+    return null;
+}
+```
+**說明**：此程式碼利用共用 Redis 管理訊息佇列，跨 Windows Server 共享資料，確保高效能和高併發處理。
+
+### 3. 長輪詢實現 (`public/js/customer_service.js`)
+```javascript
+/**
+ * 持續輪詢伺服器以獲取新訊息
+ */
+function pollMessages() {
+    $.ajax({
+        url: '<?php echo site_url("customer_service/poll_for_messages"); ?>', // 輪詢的 API 端點
+        type: 'GET',
+        dataType: 'json',
+        cache: false, // 禁用快取，確保每次請求新數據
+        timeout: 30000, // 設定 30 秒超時，適合長輪詢
+        success: function(response) {
+            if (response.status === 'success') {
+                // 若有新訊息，顯示在控制台並調用顯示函數
+                console.log('Received new message:', response.message);
+                displayMessage(response.message);
+            } else if (response.status === 'no_new_messages') {
+                // 若無新訊息，記錄並繼續輪詢
+                console.log('No new messages within timeout, re-polling...');
+            }
+            // 不論是否有新訊息，繼續下一次輪詢
+            pollMessages();
+        },
+        error: function(xhr, status, error) {
+            // 處理錯誤，記錄並在 5 秒後重試
+            console.error('Long Polling Error:', status, error);
+            setTimeout(pollMessages, 5000);
+        }
+    });
+}
+
+/**
+ * 將新訊息顯示在客服介面
+ * @param {Object} message 訊息資料
+ */
+function displayMessage(message) {
+    // 根據訊息方向選擇樣式類（接收或發送）
+    var messageClass = (message.direction === 'in') ? 'incoming' : 'outgoing';
+    // 格式化時間戳
+    var timestamp = new Date(message.timestamp * 1000).toLocaleString();
+    // 構建訊息 HTML，支援不同訊息類型
+    var messageHtml = `<li class="${messageClass}">
+                            <div class="message-header">
+                                <strong>${message.user_id}</strong>
+                                <span class="timestamp">${timestamp}</span>
+                            </div>
+                            <div class="message-body">
+                                ${message.type === 'text' ? message.content : `[${message.type} 訊息]: ${message.content}`}
+                            </div>
+                        </li>`;
+    // 將新訊息插入訊息列表頂部
+    $('#message_list').prepend(messageHtml);
+}
+```
+**說明**：此 JavaScript 程式碼實現長輪詢，從共用 Redis 獲取訊息並顯示，支援跨伺服器環境下的即時更新。
+
+## 技術細節與設計考量
+- **跨 Windows Server 共用 Redis**：  
+  透過單一 Redis 實例，Web Server、客服介面和 Worker 在不同 Windows Server 上共享訊息佇列和快取資料，解決單伺服器記憶體和 CPU 瓶頸，提升 100~200 人同時在線的效能。Redis 的高性能和原子操作確保資料一致性。
+- **為何用 CodeIgniter**？  
+  CodeIgniter 輕量、簡單，適合快速開發中小型專案，特別在 Windows Server 環境下部署便捷。
+- **為何用 Redis 做佇列**？  
+  Redis 的記憶體內處理和 `LPUSH`/`BLPOP` 原子操作，支援跨伺服器的高併發訊息處理，相比 MySQL 避免鎖定問題。
+- **長輪詢的選擇**：  
+  長輪詢實現簡單，與共用 Redis 結合，確保跨伺服器的即時訊息更新，適合 Windows Server 環境。
+- **Webhook 簽名驗證**：  
+  使用 HMAC-SHA256 和 `hash_equals()` 確保請求安全，保護跨伺服器通訊。
+- **Reply API vs Push API**：  
+  Push API 用於客服回覆，支援跨伺服器非同步處理，靈活性更高。
+
+## 未來改進
+- **支援多客服**：實現訊息分配和會話管理，存對話歷史至資料庫。
+- **處理更多訊息類型**：擴展處理圖片、影片，儲存至雲端（如 AWS S3）。
+- **升級即時技術**：用 WebSocket 取代長輪詢，提升效率。
+- **監控系統**：整合 Windows Server 監控工具（如 Zabbix），監控 Redis 和 Worker 狀態。
+
+## 貢獻
+有任何建議或問題，歡迎提交 Issue 或 Pull Request 至 [GitHub 倉庫](https://github.com/BpsEason/LineLiveChat_CI.git)。
+
+## 授權
+本專案採用 MIT License，詳見 [LICENSE](https://github.com/BpsEason/LineLiveChat_CI/blob/master/LICENSE) 文件。
+
+## 聯繫
+有問題請聯繫 [BpsEason](https://github.com/BpsEason) 或提交 Issue。
