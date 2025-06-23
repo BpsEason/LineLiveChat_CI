@@ -1,6 +1,6 @@
 # LineLiveChat_CI
 
-這是一個基於 **CodeIgniter 3.1.13** 打造的 Line 客服系統，結合 **Line Messaging API** 和 **Redis**，讓客服人員可以即時處理 Line 用戶的訊息。系統使用**長輪詢**技術實現客服介面的即時訊息更新，並透過後台 Worker 非同步發送回覆。專案已優化，可穩定支援 **100~200 人同時在線**，適合中小型企業的客服需求。原始碼位於 [GitHub 倉庫](https://github.com/BpsEason/LineLiveChat_CI.git)，適合用來展示 PHP 應用開發能力，放進作品集或面試展示非常合適。
+這是一個基於 **CodeIgniter 3.1.13** 打造的 Line 客服系統，結合 **Line Messaging API** 和 **Redis**，讓客服人員可以即時處理 Line 用戶的訊息。系統使用**長輪詢**技術實現客服介面的即時訊息更新，並透過後台 Worker 非同步發送回覆。專案已優化，可穩定支援 **100~200 人同時在線**，適合中小型企業的客服需求。原始碼位於 [GitHub 倉庫](https://github.com/BpsEason/LineLiveChat_CI.git)。
 
 ## 系統亮點
 - **高併發處理**：經過優化，系統可穩定支援 **100~200 人同時在線**，透過 Redis 佇列和長輪詢技術，確保高效訊息處理與低延遲回應。
@@ -481,6 +481,3 @@ function displayMessage(message) {
 
 ## 授權
 本專案採用 MIT License，詳見 [LICENSE](https://github.com/BpsEason/LineLiveChat_CI/blob/master/LICENSE) 文件。
-
-## 聯繫
-有問題請聯繫 [BpsEason](https://github.com/BpsEason) 或提交 Issue。
